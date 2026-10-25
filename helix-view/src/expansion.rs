@@ -31,12 +31,20 @@ pub enum Variable {
     ///
     /// This corresponds to `crate::Document::display_name`.
     BufferName,
+    /// The display name of the currently focused document.
+    /// With cursor position appended in a `:open` compatible format.
+    BufferNameWithPosition,
+    /// The display names of all currently opened documents in a newline sperated list.
+    BufferNames,
+    /// The display names of all currently opened documents in a newline sepearated list.
+    /// With cursor position appended in a `:open` compatible format.
+    BufferNamesWithPosition,
     /// The absolute path of the currently focused document. For scratch buffers this will default
     /// to the current working directory.
     FilePathAbsolute,
     /// A string containing the line-ending of the currently focused document.
     LineEnding,
-    /// Curreng working directory
+    /// Current working directory
     CurrentWorkingDirectory,
     /// Nearest ancestor directory of the current working directory that contains `.git`, `.svn`, `jj` or `.helix`
     WorkspaceDirectory,
@@ -55,6 +63,7 @@ impl Variable {
         Self::CursorLine,
         Self::CursorColumn,
         Self::BufferName,
+        Self::BufferNames,
         Self::FilePathAbsolute,
         Self::LineEnding,
         Self::CurrentWorkingDirectory,
@@ -70,6 +79,9 @@ impl Variable {
             Self::CursorLine => "cursor_line",
             Self::CursorColumn => "cursor_column",
             Self::BufferName => "buffer_name",
+            Self::BufferNameWithPosition => "buffer_name_with_position",
+            Self::BufferNames => "buffer_names",
+            Self::BufferNamesWithPosition => "buffer_names_with_position",
             Self::FilePathAbsolute => "file_path_absolute",
             Self::LineEnding => "line_ending",
             Self::CurrentWorkingDirectory => "current_working_directory",
@@ -86,6 +98,9 @@ impl Variable {
             "cursor_line" => Some(Self::CursorLine),
             "cursor_column" => Some(Self::CursorColumn),
             "buffer_name" => Some(Self::BufferName),
+            "buffer_name_with_position" => Some(Self::BufferNameWithPosition),
+            "buffer_names" => Some(Self::BufferNames),
+            "buffer_names_with_position" => Some(Self::BufferNamesWithPosition),
             "file_path_absolute" => Some(Self::FilePathAbsolute),
             "line_ending" => Some(Self::LineEnding),
             "workspace_directory" => Some(Self::WorkspaceDirectory),
@@ -266,6 +281,56 @@ fn expand_variable(editor: &Editor, variable: Variable) -> Result<Cow<'static, s
             } else {
                 Ok(Cow::Borrowed(crate::document::SCRATCH_BUFFER_NAME))
             }
+        }
+        Variable::BufferNameWithPosition => {
+            // Note: usually we would use `Document::display_name` but we can statically borrow
+            // the scratch buffer name by partially reimplementing `display_name`.
+            let cursor = doc.selection(view.id).primary().cursor(text);
+            let position = helix_core::coords_at_pos(text, cursor);
+            if let Some(path) = doc.relative_path() {
+                Ok(Cow::Owned(format!(
+                    "{}:{}:{}",
+                    path.to_string_lossy(),
+                    (position.row + 1),
+                    (position.col + 1)
+                )))
+            } else {
+                Ok(Cow::Borrowed(crate::document::SCRATCH_BUFFER_NAME))
+            }
+        }
+        Variable::BufferNames => {
+            let names: Vec<String> = editor
+                .documents()
+                .map(|doc| match doc.relative_path() {
+                    Some(path) => path.to_string_lossy().into_owned(),
+                    None => crate::document::SCRATCH_BUFFER_NAME.to_string(),
+                })
+                .collect();
+            Ok(Cow::Owned(names.join("\n")))
+        }
+        Variable::BufferNamesWithPosition => {
+            let names: Vec<String> = editor
+                .documents()
+                .map(|doc| {
+                    let Some(path) = doc.relative_path() else {
+                        return crate::document::SCRATCH_BUFFER_NAME.to_string();
+                    };
+                    let text = doc.text().slice(..);
+                    let selection = doc
+                        .selections()
+                        .get(&view.id)
+                        .or_else(|| doc.selections().values().next());
+                    match selection {
+                        Some(selection) => {
+                            let pos =
+                                helix_core::coords_at_pos(text, selection.primary().cursor(text));
+                            format!("{}:{}:{}", path.to_string_lossy(), pos.row + 1, pos.col + 1)
+                        }
+                        None => path.to_string_lossy().into_owned(),
+                    }
+                })
+                .collect();
+            Ok(Cow::Owned(names.join("\n")))
         }
         Variable::FilePathAbsolute => {
             let path = match doc.path() {
